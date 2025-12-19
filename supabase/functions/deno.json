@@ -1,0 +1,15 @@
+{
+    "compilerOptions": {
+        "lib": [
+            "deno.ns",
+            "deno.unstable",
+            "dom"
+        ],
+        "types": [
+            "npm:@types/node"
+        ]
+    },
+    "imports": {
+        "@google/genai": "npm:@google/genai@^1.0.0"
+    }
+}

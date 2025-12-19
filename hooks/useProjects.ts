@@ -1,0 +1,141 @@
+import { useState, useEffect, useCallback } from 'react';
+import { supabase, ProjectRow } from '../lib/supabase';
+import { Project, File, Message } from '../types';
+
+interface UseProjectsReturn {
+    projects: Project[];
+    loading: boolean;
+    error: string | null;
+    createProject: (project: Partial<Project>) => Promise<Project>;
+    updateProject: (id: string, updates: Partial<Project>) => Promise<void>;
+    deleteProject: (id: string) => Promise<void>;
+    refreshProjects: () => Promise<void>;
+}
+
+// Convert database row to app Project type
+const rowToProject = (row: ProjectRow): Project => ({
+    id: row.id,
+    name: row.name,
+    lastModified: new Date(row.updated_at).getTime(),
+    files: row.files as File[],
+    previewCode: row.preview_code,
+    messages: row.messages as Message[],
+});
+
+// Convert app Project to database row format
+const projectToRow = (project: Partial<Project>, userId: string) => ({
+    user_id: userId,
+    name: project.name || 'Untitled Project',
+    files: project.files || [],
+    preview_code: project.previewCode || '',
+    messages: project.messages || [],
+});
+
+export function useProjects(userId: string | undefined): UseProjectsReturn {
+    const [projects, setProjects] = useState<Project[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
+
+    // Fetch all projects for the user
+    const refreshProjects = useCallback(async () => {
+        if (!userId) {
+            setProjects([]);
+            setLoading(false);
+            return;
+        }
+
+        setLoading(true);
+        setError(null);
+
+        try {
+            const { data, error: fetchError } = await supabase
+                .from('projects')
+                .select('*')
+                .eq('user_id', userId)
+                .order('updated_at', { ascending: false });
+
+            if (fetchError) throw fetchError;
+
+            setProjects((data || []).map(rowToProject));
+        } catch (err: any) {
+            console.error('Error fetching projects:', err);
+            setError(err.message);
+        } finally {
+            setLoading(false);
+        }
+    }, [userId]);
+
+    // Initial load
+    useEffect(() => {
+        refreshProjects();
+    }, [refreshProjects]);
+
+    // Create a new project
+    const createProject = useCallback(async (project: Partial<Project>): Promise<Project> => {
+        if (!userId) throw new Error('Must be logged in to create projects');
+
+        const { data, error: insertError } = await supabase
+            .from('projects')
+            .insert(projectToRow(project, userId))
+            .select()
+            .single();
+
+        if (insertError) throw insertError;
+
+        const newProject = rowToProject(data);
+        setProjects(prev => [newProject, ...prev]);
+        return newProject;
+    }, [userId]);
+
+    // Update an existing project
+    const updateProject = useCallback(async (id: string, updates: Partial<Project>) => {
+        if (!userId) throw new Error('Must be logged in to update projects');
+
+        const updateData: Record<string, unknown> = {};
+        if (updates.name !== undefined) updateData.name = updates.name;
+        if (updates.files !== undefined) updateData.files = updates.files;
+        if (updates.previewCode !== undefined) updateData.preview_code = updates.previewCode;
+        if (updates.messages !== undefined) updateData.messages = updates.messages;
+
+        const { error: updateError } = await supabase
+            .from('projects')
+            .update(updateData)
+            .eq('id', id)
+            .eq('user_id', userId);
+
+        if (updateError) throw updateError;
+
+        setProjects(prev =>
+            prev.map(p =>
+                p.id === id
+                    ? { ...p, ...updates, lastModified: Date.now() }
+                    : p
+            )
+        );
+    }, [userId]);
+
+    // Delete a project
+    const deleteProject = useCallback(async (id: string) => {
+        if (!userId) throw new Error('Must be logged in to delete projects');
+
+        const { error: deleteError } = await supabase
+            .from('projects')
+            .delete()
+            .eq('id', id)
+            .eq('user_id', userId);
+
+        if (deleteError) throw deleteError;
+
+        setProjects(prev => prev.filter(p => p.id !== id));
+    }, [userId]);
+
+    return {
+        projects,
+        loading,
+        error,
+        createProject,
+        updateProject,
+        deleteProject,
+        refreshProjects,
+    };
+}

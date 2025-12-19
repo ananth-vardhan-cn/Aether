@@ -1,101 +1,154 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { ChatInterface } from './components/ChatInterface';
 import { PreviewWindow } from './components/PreviewWindow';
+import { AuthModal } from './components/AuthModal';
 import { Message, MessageRole, Project, ViewState, GenerationStep, File } from './types';
-import { generateAppCodeStream } from './services/gemini';
+import { generateAppCodeStream } from './services/gemini-proxy';
+import { useAuth } from './hooks/useAuth';
+import { useProjects } from './hooks/useProjects';
 
-// Mock initial project for empty state
-const createNewProject = (): Project => ({
-  id: Date.now().toString(),
+// Create a new project object
+const createNewProject = (): Partial<Project> => ({
   name: 'Untitled Spark',
-  lastModified: Date.now(),
   files: [],
   previewCode: '',
   messages: [],
 });
 
 export default function App() {
-  const [projects, setProjects] = useState<Project[]>([]);
+  // Auth state
+  const { user, loading: authLoading, signIn, signUp, signInWithGoogle, signOut, isAuthenticated } = useAuth();
+  const [showAuthModal, setShowAuthModal] = useState(false);
+
+  // Cloud projects (when authenticated)
+  const {
+    projects: cloudProjects,
+    loading: projectsLoading,
+    createProject: createCloudProject,
+    updateProject: updateCloudProject,
+    deleteProject: deleteCloudProject,
+  } = useProjects(user?.id);
+
+  // Local projects (when not authenticated)
+  const [localProjects, setLocalProjects] = useState<Project[]>([]);
+
+  // Use cloud or local projects based on auth state
+  const projects = isAuthenticated ? cloudProjects : localProjects;
+
+  // UI state
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
   const [viewState, setViewState] = useState<ViewState>(ViewState.LANDING);
   const [isCodeView, setIsCodeView] = useState(false);
   const [isPreviewFullScreen, setIsPreviewFullScreen] = useState(false);
-
-  // Auto-fix tracking
   const [autoFixCount, setAutoFixCount] = useState(0);
-
-  // New state for tracking generation steps
   const [generationSteps, setGenerationSteps] = useState<GenerationStep[]>([]);
 
-  // Load from LocalStorage on mount
+  // Load local projects from LocalStorage (for non-authenticated users)
   useEffect(() => {
-    const savedProjects = localStorage.getItem('aether_projects');
-    if (savedProjects) {
-      try {
-        const parsed = JSON.parse(savedProjects);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          setProjects(parsed);
-          // Don't automatically select a project, stay on landing
-          return;
+    if (!isAuthenticated) {
+      const savedProjects = localStorage.getItem('aether_projects');
+      if (savedProjects) {
+        try {
+          const parsed = JSON.parse(savedProjects);
+          if (Array.isArray(parsed)) {
+            setLocalProjects(parsed);
+          }
+        } catch (e) {
+          console.error("Failed to parse projects from local storage");
         }
-      } catch (e) {
-        console.error("Failed to parse projects from local storage");
       }
     }
-  }, []);
+  }, [isAuthenticated]);
 
-  // Save to LocalStorage whenever projects change
+  // Save local projects to LocalStorage
   useEffect(() => {
-    if (projects.length >= 0) {
-      localStorage.setItem('aether_projects', JSON.stringify(projects));
+    if (!isAuthenticated && localProjects.length >= 0) {
+      localStorage.setItem('aether_projects', JSON.stringify(localProjects));
     }
-  }, [projects]);
+  }, [localProjects, isAuthenticated]);
 
   const currentProject = projects.find(p => p.id === currentProjectId);
 
-  const handleNewProject = () => {
-    const newP = createNewProject();
-    setProjects(prev => [newP, ...prev]);
-    setCurrentProjectId(newP.id);
+  // Project handlers
+  const handleNewProject = useCallback(async () => {
+    const newProjectData = createNewProject();
+
+    if (isAuthenticated) {
+      try {
+        const created = await createCloudProject(newProjectData);
+        setCurrentProjectId(created.id);
+      } catch (error) {
+        console.error('Failed to create project:', error);
+      }
+    } else {
+      const newP: Project = {
+        id: Date.now().toString(),
+        name: newProjectData.name || 'Untitled Spark',
+        lastModified: Date.now(),
+        files: [],
+        previewCode: '',
+        messages: [],
+      };
+      setLocalProjects(prev => [newP, ...prev]);
+      setCurrentProjectId(newP.id);
+    }
+
     setViewState(ViewState.LANDING);
     setIsCodeView(false);
     setIsPreviewFullScreen(false);
     setAutoFixCount(0);
-    // Close sidebar on mobile when new project starts for better focus
     if (window.innerWidth < 768) setSidebarOpen(false);
-  };
+  }, [isAuthenticated, createCloudProject]);
 
-  const handleSelectProject = (id: string) => {
+  const handleSelectProject = useCallback((id: string) => {
     setCurrentProjectId(id);
     const project = projects.find(p => p.id === id);
-    if (project && project.previewCode) {
+    // Navigate to BUILDING if project has content (files or previewCode)
+    if (project && (project.previewCode || project.files.length > 0)) {
       setViewState(ViewState.BUILDING);
     } else {
       setViewState(ViewState.LANDING);
     }
     setAutoFixCount(0);
-    // Close sidebar on mobile when selecting
     if (window.innerWidth < 768) setSidebarOpen(false);
-  };
+  }, [projects]);
 
-  const handleDeleteProject = (id: string) => {
-    setProjects(prev => prev.filter(p => p.id !== id));
+  const handleDeleteProject = useCallback(async (id: string) => {
+    if (isAuthenticated) {
+      try {
+        await deleteCloudProject(id);
+      } catch (error) {
+        console.error('Failed to delete project:', error);
+      }
+    } else {
+      setLocalProjects(prev => prev.filter(p => p.id !== id));
+    }
+
     if (currentProjectId === id) {
       setCurrentProjectId(null);
       setViewState(ViewState.LANDING);
     }
-  };
+  }, [isAuthenticated, deleteCloudProject, currentProjectId]);
 
-  const updateProject = (id: string, updates: Partial<Project>) => {
-    setProjects(prev => prev.map(p => p.id === id ? { ...p, ...updates, lastModified: Date.now() } : p));
-  };
+  const updateProject = useCallback(async (id: string, updates: Partial<Project>) => {
+    if (isAuthenticated) {
+      try {
+        await updateCloudProject(id, updates);
+      } catch (error) {
+        console.error('Failed to update project:', error);
+      }
+    } else {
+      setLocalProjects(prev =>
+        prev.map(p => p.id === id ? { ...p, ...updates, lastModified: Date.now() } : p)
+      );
+    }
+  }, [isAuthenticated, updateCloudProject]);
 
-  // Utility to merge new files with existing ones using path normalization
+  // Utility to merge new files with existing ones
   const mergeFiles = (currentFiles: File[], newFiles: File[]): File[] => {
-    // Helper to normalize paths
     const normalizePath = (path: string) => {
       if (path.startsWith('./')) return path.slice(2);
       if (path.startsWith('/')) return path.slice(1);
@@ -105,34 +158,57 @@ export default function App() {
     const fileMap = new Map(currentFiles.map(f => [normalizePath(f.name), f]));
     newFiles.forEach(f => {
       const normalizedName = normalizePath(f.name);
-      // Ensure name is stored normalized
       fileMap.set(normalizedName, { ...f, name: normalizedName });
     });
     return Array.from(fileMap.values());
   };
 
   const handleSendMessage = async (content: string) => {
+    // Require authentication to generate apps
+    if (!isAuthenticated) {
+      setShowAuthModal(true);
+      return;
+    }
+
     let projectId = currentProjectId;
     let project = currentProject;
 
-    // If no project selected or exists, create one
+    // If no project selected, create one
     if (!projectId || !project) {
-      const newP = createNewProject();
-      // Name it after the prompt initially
-      newP.name = content.slice(0, 30) + (content.length > 30 ? '...' : '');
-      setProjects(prev => [newP, ...prev]);
-      setCurrentProjectId(newP.id);
-      projectId = newP.id;
-      project = newP;
+      const newProjectData = {
+        ...createNewProject(),
+        name: content.slice(0, 30) + (content.length > 30 ? '...' : ''),
+      };
+
+      if (isAuthenticated) {
+        try {
+          const created = await createCloudProject(newProjectData);
+          projectId = created.id;
+          project = created;
+          setCurrentProjectId(created.id);
+        } catch (error) {
+          console.error('Failed to create project:', error);
+          return;
+        }
+      } else {
+        const newP: Project = {
+          id: Date.now().toString(),
+          name: newProjectData.name || 'Untitled Spark',
+          lastModified: Date.now(),
+          files: [],
+          previewCode: '',
+          messages: [],
+        };
+        setLocalProjects(prev => [newP, ...prev]);
+        setCurrentProjectId(newP.id);
+        projectId = newP.id;
+        project = newP;
+      }
     }
 
-    // Reset auto-fix count on new user input
     setAutoFixCount(0);
-
-    // Auto-collapse sidebar for focus
     setSidebarOpen(false);
 
-    // 1. Add user message
     const userMsg: Message = {
       id: Date.now().toString(),
       role: MessageRole.USER,
@@ -140,37 +216,29 @@ export default function App() {
       timestamp: Date.now()
     };
 
-    // We need to use the project reference we have (either existing or new)
-    // Note: state updates are async, so we construct the new state manually for the API call
-    const updatedMessages = [...project.messages, userMsg];
+    const updatedMessages = [...(project?.messages || []), userMsg];
 
-    // Optimistic update
-    updateProject(projectId, {
+    await updateProject(projectId!, {
       messages: updatedMessages,
-      // If name is still default, update it
-      name: project.name === 'Untitled Spark' ? content.slice(0, 25) : project.name
+      name: project?.name === 'Untitled Spark' ? content.slice(0, 25) : project?.name
     });
 
-    // Switch to building view immediately if not already
     if (viewState === ViewState.LANDING) {
       setViewState(ViewState.BUILDING);
     }
 
     setIsLoading(true);
-    setGenerationSteps([]); // Reset steps for new generation
+    setGenerationSteps([]);
 
     try {
-      // 2. Call Gemini with Streaming
       const generatedData = await generateAppCodeStream(
         content,
-        project.files,
-        (steps) => setGenerationSteps(steps) // Update UI with steps as they happen
+        project?.files || [],
+        (steps) => setGenerationSteps(steps)
       );
 
-      // 3. Merge new files with existing files
-      const mergedFiles = mergeFiles(project.files, generatedData.files);
+      const mergedFiles = mergeFiles(project?.files || [], generatedData.files);
 
-      // 4. Add assistant message
       const aiMsg: Message = {
         id: (Date.now() + 1).toString(),
         role: MessageRole.ASSISTANT,
@@ -178,10 +246,10 @@ export default function App() {
         timestamp: Date.now()
       };
 
-      updateProject(projectId, {
+      await updateProject(projectId!, {
         messages: [...updatedMessages, aiMsg],
         files: mergedFiles,
-        previewCode: generatedData.previewCode || project.previewCode
+        previewCode: generatedData.previewCode || project?.previewCode
       });
 
     } catch (error: any) {
@@ -198,7 +266,8 @@ export default function App() {
         timestamp: Date.now(),
         isError: true
       };
-      updateProject(projectId, {
+
+      await updateProject(projectId!, {
         messages: [...updatedMessages, errorMsg],
       });
     } finally {
@@ -207,9 +276,7 @@ export default function App() {
   };
 
   const handleAutoFixError = async (error: string) => {
-    if (!currentProject) return;
-
-    // Safety mechanism: prevent infinite loops
+    if (!currentProject || !currentProjectId) return;
     if (isLoading || autoFixCount >= 2) {
       console.warn("Auto-fix limit reached or already loading.");
       return;
@@ -220,7 +287,6 @@ export default function App() {
     setIsLoading(true);
     setGenerationSteps([]);
 
-    // 1. Add SYSTEM message to show error detected
     const sysMsg: Message = {
       id: Date.now().toString(),
       role: MessageRole.SYSTEM,
@@ -230,11 +296,9 @@ export default function App() {
     };
 
     const updatedMessages = [...currentProject.messages, sysMsg];
-    updateProject(currentProject.id, { messages: updatedMessages });
+    await updateProject(currentProjectId, { messages: updatedMessages });
 
     try {
-      // 2. Call Gemini to Fix
-      // Explicitly ask for targeted fixes to avoid full regeneration
       const fixPrompt = `
         The previous code threw this runtime error: "${error}".
         
@@ -242,7 +306,7 @@ export default function App() {
         2. Return the CORRECTED content for ONLY the file(s) that need fixing.
         3. Return the updated <preview_html> that includes the fix.
         4. DO NOT return files that do not need changes.
-        `;
+      `;
 
       const generatedData = await generateAppCodeStream(
         fixPrompt,
@@ -250,10 +314,8 @@ export default function App() {
         (steps) => setGenerationSteps(steps)
       );
 
-      // 3. Merge updates
       const mergedFiles = mergeFiles(currentProject.files, generatedData.files);
 
-      // 4. Add success message
       const aiMsg: Message = {
         id: (Date.now() + 1).toString(),
         role: MessageRole.ASSISTANT,
@@ -261,7 +323,7 @@ export default function App() {
         timestamp: Date.now()
       };
 
-      updateProject(currentProject.id, {
+      await updateProject(currentProjectId, {
         messages: [...updatedMessages, aiMsg],
         files: mergedFiles,
         previewCode: generatedData.previewCode || currentProject.previewCode
@@ -283,7 +345,7 @@ export default function App() {
         isError: true
       };
 
-      updateProject(currentProject.id, {
+      await updateProject(currentProjectId, {
         messages: [...updatedMessages, errorMsg],
       });
     } finally {
@@ -291,8 +353,26 @@ export default function App() {
     }
   };
 
+  // Show loading state while checking auth
+  if (authLoading) {
+    return (
+      <div className="flex h-screen w-full bg-black text-white items-center justify-center">
+        <div className="animate-spin w-8 h-8 border-2 border-aether-lime border-t-transparent rounded-full"></div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-screen w-full bg-black text-white overflow-hidden font-sans selection:bg-aether-lime selection:text-black">
+      {/* Auth Modal */}
+      <AuthModal
+        isOpen={showAuthModal}
+        onClose={() => setShowAuthModal(false)}
+        onSignIn={signIn}
+        onSignUp={signUp}
+        onGoogleSignIn={signInWithGoogle}
+      />
+
       <Sidebar
         projects={projects}
         currentProjectId={currentProjectId}
@@ -301,16 +381,17 @@ export default function App() {
         onDeleteProject={handleDeleteProject}
         isOpen={sidebarOpen}
         toggleSidebar={() => setSidebarOpen(!sidebarOpen)}
+        user={user}
+        onAuthClick={() => setShowAuthModal(true)}
+        onSignOut={signOut}
       />
 
-      {/* Main Content Wrapper */}
       <div className={`
         flex-1 flex flex-col transition-all duration-300 ease-[cubic-bezier(0.2,0,0,1)]
         ${sidebarOpen ? 'md:ml-64' : 'md:ml-16'} 
         ml-0 h-full
       `}>
 
-        {/* Conditional Layout based on State */}
         {viewState === ViewState.LANDING ? (
           <ChatInterface
             messages={[]}
@@ -324,11 +405,10 @@ export default function App() {
           />
         ) : (
           <div className="flex w-full h-full flex-col md:flex-row overflow-hidden">
-            {/* Left Chat Panel - Hidden if Full Screen Preview is active */}
             <div className={`
-                    hidden md:block h-full shrink-0 border-r border-zinc-900 transition-all duration-300 ease-[cubic-bezier(0.2,0,0,1)]
-                    ${isPreviewFullScreen ? 'w-0 opacity-0 overflow-hidden' : 'w-[400px] opacity-100'}
-                `}>
+              hidden md:block h-full shrink-0 border-r border-zinc-900 transition-all duration-300 ease-[cubic-bezier(0.2,0,0,1)]
+              ${isPreviewFullScreen ? 'w-0 opacity-0 overflow-hidden' : 'w-[400px] opacity-100'}
+            `}>
               <ChatInterface
                 messages={currentProject?.messages || []}
                 onSendMessage={handleSendMessage}
@@ -341,7 +421,6 @@ export default function App() {
               />
             </div>
 
-            {/* Mobile Chat Toggle */}
             <div className="md:hidden h-1/2 border-b border-zinc-900 shrink-0">
               <ChatInterface
                 messages={currentProject?.messages || []}
@@ -355,7 +434,6 @@ export default function App() {
               />
             </div>
 
-            {/* Right Preview Panel */}
             <div className="flex-1 h-full min-w-0 overflow-hidden">
               <PreviewWindow
                 previewCode={currentProject?.previewCode || ''}
