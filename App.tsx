@@ -1,14 +1,16 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Sidebar } from './components/Sidebar';
+import { HeaderBar } from './components/HeaderBar';
 import { ChatInterface } from './components/ChatInterface';
 import { PreviewWindow } from './components/PreviewWindow';
 import { AuthModal } from './components/AuthModal';
 import { ShareModal } from './components/ShareModal';
 import { SharedProjectView } from './components/SharedProjectView';
+import { ProjectsList } from './components/ProjectsList';
 import { Message, MessageRole, Project, ViewState, GenerationStep, File } from './types';
 import { generateAppCodeStream } from './services/gemini-proxy';
 import { useAuth } from './hooks/useAuth';
 import { useProjects } from './hooks/useProjects';
+import { useProjectVersions } from './hooks/useProjectVersions';
 
 // Create a new project object
 const createNewProject = (): Partial<Project> => ({
@@ -42,15 +44,20 @@ export default function App() {
 
     // UI state
     const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
-    const [sidebarOpen, setSidebarOpen] = useState(true);
     const [isLoading, setIsLoading] = useState(false);
     const [viewState, setViewState] = useState<ViewState>(ViewState.LANDING);
     const [isCodeView, setIsCodeView] = useState(false);
-    const [isPreviewFullScreen, setIsPreviewFullScreen] = useState(false);
     const [autoFixCount, setAutoFixCount] = useState(0);
+    const [isSidebarHidden, setIsSidebarHidden] = useState(false);
     const [generationSteps, setGenerationSteps] = useState<GenerationStep[]>([]);
     const [showShareModal, setShowShareModal] = useState(false);
     const [sharedProjectId, setSharedProjectId] = useState<string | null>(null);
+    const [showVersionHistory, setShowVersionHistory] = useState(false);
+    const [showProjects, setShowProjects] = useState(false);
+    const [previewingVersion, setPreviewingVersion] = useState<import('./hooks/useProjectVersions').ProjectVersion | null>(null);
+
+    // Version history
+    const { versions, loading: versionsLoading, fetchVersions, saveVersion } = useProjectVersions();
 
     // Check URL for shared project on mount
     useEffect(() => {
@@ -113,9 +120,7 @@ export default function App() {
 
         setViewState(ViewState.LANDING);
         setIsCodeView(false);
-        setIsPreviewFullScreen(false);
         setAutoFixCount(0);
-        if (window.innerWidth < 768) setSidebarOpen(false);
     }, [isAuthenticated, createCloudProject]);
 
     const handleSelectProject = useCallback((id: string) => {
@@ -128,7 +133,6 @@ export default function App() {
             setViewState(ViewState.LANDING);
         }
         setAutoFixCount(0);
-        if (window.innerWidth < 768) setSidebarOpen(false);
     }, [projects]);
 
     const handleDeleteProject = useCallback(async (id: string) => {
@@ -222,7 +226,6 @@ export default function App() {
         }
 
         setAutoFixCount(0);
-        setSidebarOpen(false);
 
         const userMsg: Message = {
             id: Date.now().toString(),
@@ -234,8 +237,7 @@ export default function App() {
         const updatedMessages = [...(project?.messages || []), userMsg];
 
         await updateProject(projectId!, {
-            messages: updatedMessages,
-            name: project?.name === 'Untitled Spark' ? content.slice(0, 25) : project?.name
+            messages: updatedMessages
         });
 
         if (viewState === ViewState.LANDING) {
@@ -266,6 +268,16 @@ export default function App() {
                 files: mergedFiles,
                 previewCode: generatedData.previewCode || project?.previewCode
             });
+
+            // Auto-save version after successful generation
+            if (isAuthenticated && projectId) {
+                saveVersion(
+                    projectId,
+                    mergedFiles,
+                    generatedData.previewCode || project?.previewCode || '',
+                    content
+                );
+            }
 
         } catch (error: any) {
             let errorMessage = "I encountered an issue connecting to the Aether. Please ensure your API key is valid.";
@@ -420,52 +432,126 @@ export default function App() {
                 />
             )}
 
-            <Sidebar
-                projects={projects}
-                currentProjectId={currentProjectId}
-                onSelectProject={handleSelectProject}
-                onNewProject={handleNewProject}
-                onDeleteProject={handleDeleteProject}
-                isOpen={sidebarOpen}
-                toggleSidebar={() => setSidebarOpen(!sidebarOpen)}
-                user={user}
-                onAuthClick={() => setShowAuthModal(true)}
-                onSignOut={signOut}
-            />
-
-            <div className={`
-        flex-1 flex flex-col transition-all duration-300 ease-[cubic-bezier(0.2,0,0,1)]
-        ${sidebarOpen ? 'md:ml-64' : 'md:ml-16'} 
-        ml-0 h-full
-      `}>
+            <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
 
                 {viewState === ViewState.LANDING ? (
-                    <ChatInterface
-                        messages={[]}
-                        onSendMessage={handleSendMessage}
-                        viewState={ViewState.LANDING}
-                        isLoading={isLoading}
-                        generationSteps={generationSteps}
-                        projects={projects}
-                        onSelectProject={handleSelectProject}
-                        onDeleteProject={handleDeleteProject}
-                    />
+                    <div className="flex flex-col w-full h-full">
+                        <HeaderBar
+                            projects={projects}
+                            currentProjectId={currentProjectId}
+                            onSelectProject={handleSelectProject}
+                            onNewProject={handleNewProject}
+                            onDeleteProject={handleDeleteProject}
+                            user={user}
+                            onAuthClick={() => setShowAuthModal(true)}
+                            onSignOut={signOut}
+                            onHome={() => {
+                                setCurrentProjectId(null);
+                                setViewState(ViewState.LANDING);
+                                setPreviewingVersion(null);
+                                setShowVersionHistory(false);
+                            }}
+                        />
+                        <ChatInterface
+                            messages={[]}
+                            onSendMessage={handleSendMessage}
+                            viewState={ViewState.LANDING}
+                            isLoading={isLoading}
+                            generationSteps={generationSteps}
+                            projects={projects}
+                            onSelectProject={handleSelectProject}
+                            onDeleteProject={handleDeleteProject}
+                        />
+                    </div>
                 ) : (
-                    <div className="flex w-full h-full flex-col md:flex-row overflow-hidden">
-                        <div className={`
-              hidden md:block h-full shrink-0 border-r border-zinc-900 transition-all duration-300 ease-[cubic-bezier(0.2,0,0,1)]
-              ${isPreviewFullScreen ? 'w-0 opacity-0 overflow-hidden' : 'w-[400px] opacity-100'}
-            `}>
-                            <ChatInterface
-                                messages={currentProject?.messages || []}
-                                onSendMessage={handleSendMessage}
-                                viewState={ViewState.BUILDING}
-                                isLoading={isLoading}
-                                generationSteps={generationSteps}
-                                projects={projects}
-                                onSelectProject={handleSelectProject}
-                                onDeleteProject={handleDeleteProject}
-                            />
+                    <>
+                        {/* Left Column: Header + Chat */}
+                        <div
+                            className={`
+                                h-full shrink-0 overflow-hidden
+                                transition-[max-width,opacity] duration-150 ease-[cubic-bezier(0.2,0,0,1)]
+                            `}
+                            style={{
+                                maxWidth: isSidebarHidden ? '0px' : '477px',
+                                opacity: isSidebarHidden ? 0 : 1,
+                            }}
+                        >
+                            <div className="flex flex-col h-full w-[38vw] min-w-[333px] max-w-[477px] border-r border-zinc-900">
+                                <HeaderBar
+                                    projects={projects}
+                                    currentProjectId={currentProjectId}
+                                    onSelectProject={handleSelectProject}
+                                    onNewProject={handleNewProject}
+                                    onDeleteProject={handleDeleteProject}
+                                    user={user}
+                                    onAuthClick={() => setShowAuthModal(true)}
+                                    onSignOut={signOut}
+                                    onHome={() => {
+                                        setCurrentProjectId(null);
+                                        setViewState(ViewState.LANDING);
+                                        setPreviewingVersion(null);
+                                        setShowVersionHistory(false);
+                                    }}
+                                    isLoading={isLoading}
+                                    showVersionHistory={showVersionHistory}
+                                    onVersionHistoryClick={() => {
+                                        if (currentProjectId) {
+                                            fetchVersions(currentProjectId);
+                                            setShowVersionHistory(true);
+                                            setShowProjects(false);
+                                        }
+                                    }}
+                                    onCloseVersionHistory={() => setShowVersionHistory(false)}
+                                    onToggleProjects={() => {
+                                        setShowProjects(!showProjects);
+                                        if (showVersionHistory) setShowVersionHistory(false);
+                                    }}
+                                    showProjects={showProjects}
+                                />
+                                {showProjects ? (
+                                    <ProjectsList
+                                        projects={projects}
+                                        currentProjectId={currentProjectId}
+                                        onSelectProject={handleSelectProject}
+                                        onNewProject={handleNewProject}
+                                        onDeleteProject={handleDeleteProject}
+                                        onClose={() => setShowProjects(false)}
+                                    />
+                                ) : (
+                                    <ChatInterface
+                                        messages={currentProject?.messages || []}
+                                        onSendMessage={handleSendMessage}
+                                        viewState={ViewState.BUILDING}
+                                        isLoading={isLoading}
+                                        generationSteps={generationSteps}
+                                        projects={projects}
+                                        onSelectProject={handleSelectProject}
+                                        onDeleteProject={handleDeleteProject}
+                                        versions={versions}
+                                        versionsLoading={versionsLoading}
+                                        currentFiles={currentProject?.files || []}
+                                        showVersionHistory={showVersionHistory}
+                                        onHistoryClick={() => {
+                                            if (currentProjectId) {
+                                                fetchVersions(currentProjectId);
+                                                setShowVersionHistory(true);
+                                            }
+                                        }}
+                                        onCloseVersionHistory={() => setShowVersionHistory(false)}
+                                        onRevert={async (version) => {
+                                            await updateProject(currentProject!.id, {
+                                                files: version.files,
+                                                previewCode: version.previewCode,
+                                            });
+                                            setShowVersionHistory(false);
+                                            setPreviewingVersion(null);
+                                        }}
+                                        onPreviewVersion={setPreviewingVersion}
+                                        previewingVersionId={previewingVersion?.id || null}
+                                        userEmail={user?.email}
+                                    />
+                                )}
+                            </div>
                         </div>
 
                         <div className="md:hidden h-1/2 border-b border-zinc-900 shrink-0">
@@ -478,25 +564,59 @@ export default function App() {
                                 projects={projects}
                                 onSelectProject={handleSelectProject}
                                 onDeleteProject={handleDeleteProject}
+                                versions={versions}
+                                versionsLoading={versionsLoading}
+                                currentFiles={currentProject?.files || []}
+                                showVersionHistory={showVersionHistory}
+                                onHistoryClick={() => {
+                                    if (currentProjectId) {
+                                        fetchVersions(currentProjectId);
+                                        setShowVersionHistory(true);
+                                    }
+                                }}
+                                onCloseVersionHistory={() => setShowVersionHistory(false)}
+                                onRevert={async (version) => {
+                                    await updateProject(currentProject!.id, {
+                                        files: version.files,
+                                        previewCode: version.previewCode,
+                                    });
+                                    setShowVersionHistory(false);
+                                    setPreviewingVersion(null);
+                                }}
+                                onPreviewVersion={setPreviewingVersion}
+                                previewingVersionId={previewingVersion?.id || null}
+                                userEmail={user?.email}
                             />
                         </div>
 
                         <div className="flex-1 h-full min-w-0 overflow-hidden">
                             <PreviewWindow
-                                previewCode={currentProject?.previewCode || ''}
-                                files={currentProject?.files || []}
+                                previewCode={previewingVersion?.previewCode || currentProject?.previewCode || ''}
+                                files={previewingVersion?.files || currentProject?.files || []}
                                 onToggleView={() => setIsCodeView(!isCodeView)}
                                 isCodeView={isCodeView}
                                 projectTitle={currentProject?.name || ''}
                                 isLoading={isLoading}
-                                isFullScreen={isPreviewFullScreen}
-                                onToggleFullScreen={() => setIsPreviewFullScreen(!isPreviewFullScreen)}
                                 onPreviewError={handleAutoFixError}
                                 onShareClick={() => setShowShareModal(true)}
                                 isPublic={currentProject?.isPublic}
+                                previewingVersion={previewingVersion}
+                                onRestoreVersion={async () => {
+                                    if (previewingVersion && currentProject) {
+                                        await updateProject(currentProject.id, {
+                                            files: previewingVersion.files,
+                                            previewCode: previewingVersion.previewCode,
+                                        });
+                                        setPreviewingVersion(null);
+                                        setShowVersionHistory(false);
+                                    }
+                                }}
+                                onBackToLatest={() => setPreviewingVersion(null)}
+                                isSidebarHidden={isSidebarHidden}
+                                onToggleSidebar={() => setIsSidebarHidden(!isSidebarHidden)}
                             />
                         </div>
-                    </div>
+                    </>
                 )}
             </div>
         </div>

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Icons } from './ui/Icons';
+import { Logo } from './ui/Logo';
 import { supabase } from '../lib/supabase';
 import { SandpackProvider, SandpackLayout, SandpackPreview } from "@codesandbox/sandpack-react";
 import { amethyst } from "@codesandbox/sandpack-themes";
@@ -151,7 +152,7 @@ module.exports = {
                         {/* Glow effect */}
                         <div className="absolute inset-0 bg-gradient-to-r from-aether-lime/10 to-aether-purple/10 rounded-xl blur opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
 
-                        <Icons.Zap size={16} className="text-aether-lime relative z-10" />
+                        <Logo className="w-4 h-4 relative z-10" />
                         <span className="text-xs font-medium text-zinc-400 relative z-10">Built with</span>
                         <span className="font-bold text-sm tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-white to-zinc-400 relative z-10">Aether</span>
                         <span className="text-[8px] bg-aether-lime text-black px-1 py-0.5 rounded font-mono font-bold uppercase relative z-10">Beta</span>

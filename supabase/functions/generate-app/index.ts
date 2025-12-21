@@ -169,6 +169,63 @@ serve(async (req) => {
       );
     }
 
+    // ========== PROMPT SANITIZATION ==========
+    const MAX_PROMPT_LENGTH = 4000;
+
+    // Normalize and trim
+    const sanitizedPrompt = prompt.trim().replace(/\s+/g, ' ');
+
+    // Check length
+    if (sanitizedPrompt.length > MAX_PROMPT_LENGTH) {
+      return new Response(
+        JSON.stringify({ error: `Prompt is too long. Maximum ${MAX_PROMPT_LENGTH} characters allowed.` }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // Prompt injection patterns
+    const INJECTION_PATTERNS = [
+      /ignore\s+(all\s+)?(previous|prior|above)\s+(instructions|prompts|rules)/i,
+      /forget\s+(all\s+)?(previous|prior|above)\s+(instructions|prompts|rules)/i,
+      /disregard\s+(all\s+)?(previous|prior|above)\s+(instructions|prompts|rules)/i,
+      /you\s+are\s+now\s+(a|an)\s+(?!app|application|website|page)/i,
+      /pretend\s+(you('re|are)|to\s+be)\s+/i,
+      /output\s+(your\s+)?(api|secret|key|system\s+prompt)/i,
+      /reveal\s+(your\s+)?(api|secret|key|system\s+prompt)/i,
+      /jailbreak/i,
+      /DAN\s*mode/i,
+    ];
+
+    for (const pattern of INJECTION_PATTERNS) {
+      if (pattern.test(sanitizedPrompt)) {
+        return new Response(
+          JSON.stringify({ error: "Your prompt contains patterns that could affect AI behavior. Please rephrase." }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+    }
+
+    // Harmful content patterns
+    const HARMFUL_PATTERNS = [
+      /\b(phishing|phish)\b.*\b(page|site|website|form)\b/i,
+      /\b(keylogger|key\s*logger)\b/i,
+      /\b(malware|ransomware|spyware|trojan|virus)\b/i,
+      /\b(credit\s*card|cc)\s*(stealer|skimmer|harvester)\b/i,
+      /\b(password|credential)\s*(stealer|harvester|grabber)\b/i,
+      /\bfake\s*(login|bank|paypal|amazon)\b/i,
+      /\bscam\s*(page|site|website)\b/i,
+    ];
+
+    for (const pattern of HARMFUL_PATTERNS) {
+      if (pattern.test(sanitizedPrompt)) {
+        return new Response(
+          JSON.stringify({ error: "This type of application cannot be generated." }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+    }
+    // ========== END SANITIZATION ==========
+
     // Initialize Gemini
     const ai = new GoogleGenAI({ apiKey });
 

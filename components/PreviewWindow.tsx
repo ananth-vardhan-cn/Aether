@@ -1,8 +1,10 @@
 import React, { useState, useMemo } from 'react';
 import { Icons } from './ui/Icons';
 import { File } from '../types';
-import { SandpackProvider, SandpackLayout, SandpackPreview, SandpackFileExplorer, SandpackCodeEditor, useSandpack } from "@codesandbox/sandpack-react";
+import { SandpackProvider, SandpackLayout, SandpackPreview, SandpackFileExplorer, SandpackCodeEditor, useSandpack, useSandpackNavigation } from "@codesandbox/sandpack-react";
 import { amethyst } from "@codesandbox/sandpack-themes";
+
+import { ProjectVersion } from '../hooks/useProjectVersions';
 
 interface PreviewWindowProps {
   previewCode: string;
@@ -11,11 +13,15 @@ interface PreviewWindowProps {
   isCodeView: boolean;
   projectTitle: string;
   isLoading?: boolean;
-  isFullScreen?: boolean;
-  onToggleFullScreen?: () => void;
   onPreviewError?: (error: string) => void;
   onShareClick?: () => void;
   isPublic?: boolean;
+  onHistoryClick?: () => void;
+  previewingVersion?: ProjectVersion | null;
+  onRestoreVersion?: () => void;
+  onBackToLatest?: () => void;
+  isSidebarHidden?: boolean;
+  onToggleSidebar?: () => void;
 }
 
 // Custom component to handle Sandpack content with useSandpack hook
@@ -42,7 +48,7 @@ const SandpackContent: React.FC<{ isCodeView: boolean }> = ({ isCodeView }) => {
 
       {/* Preview - Always mounted, hidden with CSS when in code view */}
       <div
-        className={`${!isCodeView ? 'flex' : 'hidden'} h-full w-full overflow-hidden`}
+        className={`${!isCodeView ? 'flex flex-col' : 'hidden'} h-full w-full overflow-hidden`}
         style={{ flex: !isCodeView ? 1 : 0, minWidth: 0 }}
       >
         <SandpackPreview
@@ -62,13 +68,25 @@ export const PreviewWindow: React.FC<PreviewWindowProps> = ({
   isCodeView,
   projectTitle,
   isLoading,
-  isFullScreen,
-  onToggleFullScreen,
   onPreviewError,
   onShareClick,
-  isPublic
+  isPublic,
+  onHistoryClick,
+  previewingVersion,
+  onRestoreVersion,
+  onBackToLatest,
+  isSidebarHidden,
+  onToggleSidebar
 }) => {
   const [isCopied, setIsCopied] = useState(false);
+  const [viewport, setViewport] = useState<'desktop' | 'tablet' | 'mobile'>('desktop');
+
+  // Viewport dimensions
+  const viewportStyles = {
+    desktop: { width: '100%', maxWidth: '100%' },
+    tablet: { width: '768px', maxWidth: '768px' },
+    mobile: { width: '375px', maxWidth: '375px' },
+  };
 
   // Create a stable key based on project title to force remount when project changes
   const sandpackKey = useMemo(() => {
@@ -241,82 +259,154 @@ module.exports = {
 
   return (
     <div className="flex-1 flex flex-col h-full bg-[#050505] relative overflow-hidden z-0 transition-all duration-300">
-      {/* Top Bar */}
-      <div className="h-14 border-b border-zinc-900 flex items-center justify-between px-4 sm:px-6 bg-black/80 backdrop-blur-md z-20 shrink-0">
-        <div className="flex items-center gap-3 min-w-0">
-          <div className={`w-2 h-2 rounded-full shrink-0 ${isLoading ? 'bg-aether-lime animate-pulse' : 'bg-zinc-500'}`}></div>
-          <span className="text-sm font-medium text-zinc-300 truncate">{projectTitle || "Untitled Project"}</span>
-        </div>
-
-        <div className="flex items-center gap-2 sm:gap-3">
-          <div className="flex items-center bg-zinc-900 rounded-lg p-0.5 border border-zinc-800">
+      {/* Top Bar - Changes based on whether viewing a version or current */}
+      <div className={`h-14 border-b flex items-center justify-between px-4 sm:px-6 backdrop-blur-md z-20 shrink-0 relative ${previewingVersion ? 'border-aether-lime/30 bg-aether-lime/5' : 'border-zinc-900 bg-black/80'
+        }`}>
+        {previewingVersion ? (
+          /* Version Preview Mode */
+          <>
             <button
-              onClick={() => isCodeView ? onToggleView() : null}
-              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${!isCodeView ? 'bg-zinc-800 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`}
+              onClick={onBackToLatest}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-zinc-300 bg-zinc-800 hover:bg-zinc-700 rounded-lg font-medium transition-colors border border-zinc-700"
             >
-              Preview
+              <Icons.ChevronRight className="rotate-180" size={14} />
+              Back to latest
             </button>
-            <button
-              onClick={() => !isCodeView ? onToggleView() : null}
-              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${isCodeView ? 'bg-zinc-800 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`}
-            >
-              Code
-            </button>
-          </div>
 
-          {onShareClick && (
-            <button
-              onClick={onShareClick}
-              className={`p-1.5 transition-colors hidden sm:flex items-center gap-1.5 rounded-lg ${isPublic ? 'text-aether-lime bg-aether-lime/10 hover:bg-aether-lime/20' : 'text-zinc-400 hover:text-white hover:bg-zinc-800'}`}
-              title={isPublic ? "Shared publicly" : "Share project"}
-            >
-              <Icons.Share size={16} />
-              {isPublic && <span className="text-xs font-medium">Shared</span>}
-            </button>
-          )}
+            <div className="absolute left-1/2 -translate-x-1/2 flex items-center gap-2">
+              <span className="text-sm text-zinc-500">Viewing:</span>
+              <span className="px-3 py-1 bg-zinc-800 rounded-lg text-sm text-zinc-200 font-medium">
+                {previewingVersion.prompt?.split(' ').slice(0, 5).join(' ')}{(previewingVersion.prompt?.split(' ').length || 0) > 5 ? '...' : ''}
+              </span>
+            </div>
 
-          {onToggleFullScreen && (
             <button
-              onClick={onToggleFullScreen}
-              className="p-1.5 text-zinc-400 hover:text-white transition-colors hidden sm:block"
-              title={isFullScreen ? "Exit Full Screen" : "Full Screen"}
+              onClick={onRestoreVersion}
+              className="px-4 py-2 bg-aether-lime text-black text-xs font-bold rounded-lg hover:bg-emerald-400 transition-colors"
             >
-              {isFullScreen ? <Icons.Minimize size={16} /> : <Icons.Maximize size={16} />}
+              Restore this version
             </button>
-          )}
+          </>
+        ) : (
+          /* Normal Mode */
+          <>
+            <div className="flex items-center gap-3 min-w-0">
+              {onToggleSidebar && (
+                <button
+                  onClick={onToggleSidebar}
+                  className={`p-1.5 rounded-lg transition-colors ${isSidebarHidden ? 'bg-aether-lime/10 text-aether-lime' : 'text-zinc-400 hover:text-white hover:bg-zinc-800'}`}
+                  title={isSidebarHidden ? "Show Chat Panel" : "Hide Chat Panel"}
+                >
+                  {isSidebarHidden ? <Icons.PanelLeftOpen size={18} /> : <Icons.PanelLeftClose size={18} />}
+                </button>
+              )}
+            </div>
 
-          <button
-            className="bg-white text-black px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-zinc-200 transition-colors flex items-center gap-2"
-            onClick={() => alert("Downloading feature coming soon with Sandpack integration!")}
-          >
-            <Icons.Download size={14} />
-            <span className="hidden sm:inline">Export</span>
-          </button>
-        </div>
+            {/* Center: Device Preview Buttons - Only show when not in code view */}
+            {!isCodeView && (
+              <div className="absolute left-1/2 -translate-x-1/2 hidden sm:flex items-center bg-zinc-900 rounded-full p-1 border border-zinc-700">
+                <button
+                  onClick={() => setViewport('desktop')}
+                  className={`p-1.5 rounded-md transition-all ${viewport === 'desktop' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
+                  title="Desktop View"
+                >
+                  <Icons.Monitor size={14} />
+                </button>
+                <button
+                  onClick={() => setViewport('tablet')}
+                  className={`p-1.5 rounded-md transition-all ${viewport === 'tablet' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
+                  title="Tablet View (768px)"
+                >
+                  <Icons.Tablet size={14} />
+                </button>
+                <button
+                  onClick={() => setViewport('mobile')}
+                  className={`p-1.5 rounded-md transition-all ${viewport === 'mobile' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
+                  title="Mobile View (375px)"
+                >
+                  <Icons.Smartphone size={14} />
+                </button>
+              </div>
+            )}
+
+            <div className="flex items-center gap-2 sm:gap-3">
+              <div className="flex items-center bg-zinc-900 rounded-lg p-0.5 border border-zinc-800">
+                <button
+                  onClick={() => isCodeView ? onToggleView() : null}
+                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${!isCodeView ? 'bg-zinc-800 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`}
+                >
+                  Preview
+                </button>
+                <button
+                  onClick={() => !isCodeView ? onToggleView() : null}
+                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${isCodeView ? 'bg-zinc-800 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`}
+                >
+                  Code
+                </button>
+              </div>
+
+              {onHistoryClick && (
+                <button
+                  onClick={onHistoryClick}
+                  className="p-1.5 text-zinc-400 hover:text-aether-lime hover:bg-zinc-800 transition-colors hidden sm:block rounded-lg"
+                  title="Version History"
+                >
+                  <Icons.History size={16} />
+                </button>
+              )}
+
+              {onShareClick && (
+                <button
+                  onClick={onShareClick}
+                  className={`p-1.5 transition-colors hidden sm:flex items-center gap-1.5 rounded-lg ${isPublic ? 'text-aether-lime bg-aether-lime/10 hover:bg-aether-lime/20' : 'text-zinc-400 hover:text-white hover:bg-zinc-800'}`}
+                  title={isPublic ? "Shared publicly" : "Share project"}
+                >
+                  <Icons.Share size={16} />
+                  {isPublic && <span className="text-xs font-medium">Shared</span>}
+                </button>
+              )}
+
+
+
+              <button
+                className="bg-white text-black px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-zinc-200 transition-colors flex items-center gap-2"
+                onClick={() => alert("Downloading feature coming soon with Sandpack integration!")}
+              >
+                <Icons.Download size={14} />
+                <span className="hidden sm:inline">Export</span>
+              </button>
+            </div>
+          </>
+        )}
       </div>
 
       {/* Content Area */}
-      <div className="flex-1 relative flex overflow-hidden">
-        {/* Loading Overlay */}
-        {isLoading && (
-          <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-[#050505]/90 backdrop-blur-sm animate-in fade-in duration-500">
-            <div className="flex flex-col items-center gap-6 p-8">
-              <div className="relative">
-                <div className="w-20 h-20 rounded-full border-4 border-zinc-800/50"></div>
-                <div className="absolute top-0 left-0 w-20 h-20 rounded-full border-4 border-t-aether-lime border-r-transparent border-b-transparent border-l-transparent animate-spin duration-1000"></div>
-                <div className="absolute inset-0 flex items-center justify-center">
-                  <Icons.Sparkles className="w-8 h-8 text-aether-lime animate-pulse" />
+      <div className="flex-1 relative flex overflow-hidden bg-zinc-950">
+        {/* Viewport Container - centers the preview when using tablet/mobile */}
+        <div
+          className={`relative flex flex-col h-full transition-all duration-300 mx-auto ${viewport !== 'desktop' && !isCodeView ? 'border-x border-zinc-800 shadow-2xl' : ''
+            }`}
+          style={!isCodeView ? viewportStyles[viewport] : { width: '100%', maxWidth: '100%' }}
+        >
+          {/* Loading Overlay */}
+          {isLoading && (
+            <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-[#050505]/90 backdrop-blur-sm animate-in fade-in duration-500">
+              <div className="flex flex-col items-center gap-6 p-8">
+                <div className="relative">
+                  <div className="w-20 h-20 rounded-full border-4 border-zinc-800/50"></div>
+                  <div className="absolute top-0 left-0 w-20 h-20 rounded-full border-4 border-t-aether-lime border-r-transparent border-b-transparent border-l-transparent animate-spin duration-1000"></div>
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <Icons.Sparkles className="w-8 h-8 text-aether-lime animate-pulse" />
+                  </div>
+                </div>
+                <div className="text-center space-y-2">
+                  <h3 className="text-xl font-bold text-white tracking-tight">Generating application...</h3>
+                  <p className="text-sm text-zinc-500 font-mono animate-pulse">Consulting the Aether</p>
                 </div>
               </div>
-              <div className="text-center space-y-2">
-                <h3 className="text-xl font-bold text-white tracking-tight">Generating application...</h3>
-                <p className="text-sm text-zinc-500 font-mono animate-pulse">Consulting the Aether</p>
-              </div>
             </div>
-          </div>
-        )}
+          )}
 
-        <div className="w-full h-full flex flex-1">
           <SandpackProvider
             key={sandpackKey}
             template="react-ts"

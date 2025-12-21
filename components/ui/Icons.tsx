@@ -26,7 +26,12 @@ import {
     Trash2,
     Share2,
     Link,
-    Globe
+    Globe,
+    MoreVertical,
+    Home,
+    PanelLeftOpen,
+    PanelLeftClose,
+    User
 } from 'lucide-react';
 
 export const Icons = {
@@ -57,5 +62,10 @@ export const Icons = {
     Trash: Trash2,
     Share: Share2,
     Link,
-    Globe
+    Globe,
+    MoreVertical,
+    Home,
+    PanelLeftOpen,
+    PanelLeftClose,
+    User
 };

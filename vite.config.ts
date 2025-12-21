@@ -20,6 +20,30 @@ export default defineConfig(({ mode }) => {
       alias: {
         '@': path.resolve(__dirname, '.'),
       }
-    }
+    },
+    build: {
+      // Code splitting for better caching
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            // Vendor chunks - cached separately from app code
+            'vendor-react': ['react', 'react-dom'],
+            'vendor-sandpack': ['@codesandbox/sandpack-react', '@codesandbox/sandpack-themes'],
+            'vendor-supabase': ['@supabase/supabase-js'],
+            'vendor-ui': ['lucide-react'],
+          },
+          // Content-hash for cache busting
+          chunkFileNames: 'assets/[name]-[hash].js',
+          entryFileNames: 'assets/[name]-[hash].js',
+          assetFileNames: 'assets/[name]-[hash].[ext]',
+        },
+      },
+      // Minification
+      minify: 'esbuild',
+      // Source maps for production debugging
+      sourcemap: true,
+      // Target modern browsers for smaller bundles
+      target: 'es2020',
+    },
   };
 });
