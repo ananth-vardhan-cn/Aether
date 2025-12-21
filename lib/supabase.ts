@@ -35,6 +35,8 @@ export interface ProjectRow {
         timestamp: number;
         isError?: boolean;
     }>;
+    share_id: string | null;            // Unique ID for public sharing
+    is_public: boolean;                 // Whether project is publicly accessible
     created_at: string;
     updated_at: string;
 }

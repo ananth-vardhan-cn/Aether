@@ -10,6 +10,8 @@ interface UseProjectsReturn {
     updateProject: (id: string, updates: Partial<Project>) => Promise<void>;
     deleteProject: (id: string) => Promise<void>;
     refreshProjects: () => Promise<void>;
+    shareProject: (id: string) => Promise<string>;
+    unshareProject: (id: string) => Promise<void>;
 }
 
 // Convert database row to app Project type
@@ -20,6 +22,8 @@ const rowToProject = (row: ProjectRow): Project => ({
     files: row.files as File[],
     previewCode: row.preview_code,
     messages: row.messages as Message[],
+    shareId: row.share_id,
+    isPublic: row.is_public,
 });
 
 // Convert app Project to database row format
@@ -129,6 +133,53 @@ export function useProjects(userId: string | undefined): UseProjectsReturn {
         setProjects(prev => prev.filter(p => p.id !== id));
     }, [userId]);
 
+    // Share a project (generate share_id and set is_public = true)
+    const shareProject = useCallback(async (id: string): Promise<string> => {
+        if (!userId) throw new Error('Must be logged in to share projects');
+
+        // Generate a short unique share ID
+        const shareId = crypto.randomUUID().split('-')[0];
+
+        const { error: updateError } = await supabase
+            .from('projects')
+            .update({ share_id: shareId, is_public: true })
+            .eq('id', id)
+            .eq('user_id', userId);
+
+        if (updateError) throw updateError;
+
+        setProjects(prev =>
+            prev.map(p =>
+                p.id === id
+                    ? { ...p, shareId, isPublic: true }
+                    : p
+            )
+        );
+
+        return shareId;
+    }, [userId]);
+
+    // Unshare a project (set is_public = false)
+    const unshareProject = useCallback(async (id: string): Promise<void> => {
+        if (!userId) throw new Error('Must be logged in to unshare projects');
+
+        const { error: updateError } = await supabase
+            .from('projects')
+            .update({ is_public: false })
+            .eq('id', id)
+            .eq('user_id', userId);
+
+        if (updateError) throw updateError;
+
+        setProjects(prev =>
+            prev.map(p =>
+                p.id === id
+                    ? { ...p, isPublic: false }
+                    : p
+            )
+        );
+    }, [userId]);
+
     return {
         projects,
         loading,
@@ -137,5 +188,7 @@ export function useProjects(userId: string | undefined): UseProjectsReturn {
         updateProject,
         deleteProject,
         refreshProjects,
+        shareProject,
+        unshareProject,
     };
 }

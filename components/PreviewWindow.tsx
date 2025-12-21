@@ -14,6 +14,8 @@ interface PreviewWindowProps {
   isFullScreen?: boolean;
   onToggleFullScreen?: () => void;
   onPreviewError?: (error: string) => void;
+  onShareClick?: () => void;
+  isPublic?: boolean;
 }
 
 // Custom component to handle Sandpack content with useSandpack hook
@@ -62,7 +64,9 @@ export const PreviewWindow: React.FC<PreviewWindowProps> = ({
   isLoading,
   isFullScreen,
   onToggleFullScreen,
-  onPreviewError
+  onPreviewError,
+  onShareClick,
+  isPublic
 }) => {
   const [isCopied, setIsCopied] = useState(false);
 
@@ -259,6 +263,17 @@ module.exports = {
               Code
             </button>
           </div>
+
+          {onShareClick && (
+            <button
+              onClick={onShareClick}
+              className={`p-1.5 transition-colors hidden sm:flex items-center gap-1.5 rounded-lg ${isPublic ? 'text-aether-lime bg-aether-lime/10 hover:bg-aether-lime/20' : 'text-zinc-400 hover:text-white hover:bg-zinc-800'}`}
+              title={isPublic ? "Shared publicly" : "Share project"}
+            >
+              <Icons.Share size={16} />
+              {isPublic && <span className="text-xs font-medium">Shared</span>}
+            </button>
+          )}
 
           {onToggleFullScreen && (
             <button

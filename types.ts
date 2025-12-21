@@ -25,6 +25,8 @@ export interface Project {
   files: File[];
   previewCode: string; // The self-contained HTML for the iframe
   messages: Message[];
+  shareId?: string | null;    // Unique ID for public sharing
+  isPublic?: boolean;         // Whether project is publicly accessible
 }
 
 export enum ViewState {
