@@ -6,11 +6,14 @@ import { AuthModal } from './components/AuthModal';
 import { ShareModal } from './components/ShareModal';
 import { SharedProjectView } from './components/SharedProjectView';
 import { ProjectsList } from './components/ProjectsList';
-import { Message, MessageRole, Project, ViewState, GenerationStep, File } from './types';
+import { GitHubModal } from './components/GitHubModal';
+import { ApiKeysModal } from './components/ApiKeysModal';
+import { Message, MessageRole, Project, ViewState, GenerationStep, File, AIModel, AI_MODELS } from './types';
 import { generateAppCodeStream } from './services/gemini-proxy';
 import { useAuth } from './hooks/useAuth';
 import { useProjects } from './hooks/useProjects';
 import { useProjectVersions } from './hooks/useProjectVersions';
+import { useApiKeys } from './hooks/useApiKeys';
 
 // Create a new project object
 const createNewProject = (): Partial<Project> => ({
@@ -34,6 +37,8 @@ export default function App() {
         deleteProject: deleteCloudProject,
         shareProject: shareCloudProject,
         unshareProject: unshareCloudProject,
+        pinProject: pinCloudProject,
+        unpinProject: unpinCloudProject,
     } = useProjects(user?.id);
 
     // Local projects (when not authenticated)
@@ -49,12 +54,23 @@ export default function App() {
     const [isCodeView, setIsCodeView] = useState(false);
     const [autoFixCount, setAutoFixCount] = useState(0);
     const [isSidebarHidden, setIsSidebarHidden] = useState(false);
+    const [isAutoFixing, setIsAutoFixing] = useState(false);  // Flag to differentiate auto-fix from new builds
     const [generationSteps, setGenerationSteps] = useState<GenerationStep[]>([]);
+    const [currentBuildPlan, setCurrentBuildPlan] = useState<string>('');
+    const [currentBuildSummary, setCurrentBuildSummary] = useState<string>('');
+    const [sessionTokenCount, setSessionTokenCount] = useState<number>(0);  // Cumulative tokens for current session
     const [showShareModal, setShowShareModal] = useState(false);
     const [sharedProjectId, setSharedProjectId] = useState<string | null>(null);
     const [showVersionHistory, setShowVersionHistory] = useState(false);
     const [showProjects, setShowProjects] = useState(false);
+    const [showGitHubModal, setShowGitHubModal] = useState(false);
     const [previewingVersion, setPreviewingVersion] = useState<import('./hooks/useProjectVersions').ProjectVersion | null>(null);
+    const [pendingError, setPendingError] = useState<string | null>(null);  // Error from Sandpack awaiting user action
+    const [showApiKeysModal, setShowApiKeysModal] = useState(false);
+    const [selectedModel, setSelectedModel] = useState<AIModel>(AI_MODELS[1]); // Default to Gemini 3 Flash
+
+    // API Keys management
+    const { configured: configuredProviders } = useApiKeys();
 
     // Version history
     const { versions, loading: versionsLoading, fetchVersions, saveVersion } = useProjectVersions();
@@ -118,7 +134,7 @@ export default function App() {
             setCurrentProjectId(newP.id);
         }
 
-        setViewState(ViewState.LANDING);
+        setViewState(ViewState.BUILDING);
         setIsCodeView(false);
         setAutoFixCount(0);
     }, [isAuthenticated, createCloudProject]);
@@ -151,6 +167,29 @@ export default function App() {
             setViewState(ViewState.LANDING);
         }
     }, [isAuthenticated, deleteCloudProject, currentProjectId]);
+
+    const handlePinProject = useCallback(async (id: string, shouldPin: boolean) => {
+        if (isAuthenticated) {
+            try {
+                if (shouldPin) {
+                    await pinCloudProject(id);
+                } else {
+                    await unpinCloudProject(id);
+                }
+            } catch (error) {
+                console.error('Failed to pin/unpin project:', error);
+            }
+        } else {
+            // For local projects, toggle pin state
+            setLocalProjects(prev =>
+                prev.map(p =>
+                    p.id === id
+                        ? { ...p, isPinned: shouldPin, pinnedAt: shouldPin ? Date.now() : undefined }
+                        : p
+                )
+            );
+        }
+    }, [isAuthenticated, pinCloudProject, unpinCloudProject]);
 
     const updateProject = useCallback(async (id: string, updates: Partial<Project>) => {
         if (isAuthenticated) {
@@ -246,21 +285,52 @@ export default function App() {
 
         setIsLoading(true);
         setGenerationSteps([]);
+        setCurrentBuildPlan('');
+        setCurrentBuildSummary('');
+        setSessionTokenCount(0);  // Reset for new user prompt
+
+        const generationStartTime = Date.now();  // Track generation start time
 
         try {
             const generatedData = await generateAppCodeStream(
                 content,
                 project?.files || [],
-                (steps) => setGenerationSteps(steps)
+                (steps) => setGenerationSteps(steps),
+                (buildPlan) => setCurrentBuildPlan(buildPlan),
+                selectedModel
             );
 
+            // Update build plan and summary for display
+            if (generatedData.buildPlan) {
+                setCurrentBuildPlan(generatedData.buildPlan);
+            }
+            if (generatedData.buildSummary) {
+                setCurrentBuildSummary(generatedData.buildSummary);
+            }
+
+            // Set session token count (initial generation starts fresh)
+            const newSessionTokens = generatedData.tokenCount || 0;
+            setSessionTokenCount(newSessionTokens);
+
             const mergedFiles = mergeFiles(project?.files || [], generatedData.files);
+
+            // Calculate thinking time in seconds
+            const thinkingTime = Math.round((Date.now() - generationStartTime) / 1000);
 
             const aiMsg: Message = {
                 id: (Date.now() + 1).toString(),
                 role: MessageRole.ASSISTANT,
-                content: "I've updated the application. You can check the changes in the preview.",
-                timestamp: Date.now()
+                content: generatedData.buildPlan || "I've updated the application. You can check the changes in the preview.",
+                timestamp: Date.now(),
+                buildSummary: generatedData.buildSummary,
+                actions: generatedData.files.map(f => {
+                    // Get line count from generationSteps if available
+                    const step = generationSteps.find(s => s.id === f.name);
+                    const lineCount = step?.lineCount || (f.content.match(/\n/g) || []).length + 1;
+                    return { fileName: f.name, lineCount };
+                }),
+                tokenCount: newSessionTokens,
+                thinkingTime,
             };
 
             await updateProject(projectId!, {
@@ -302,6 +372,27 @@ export default function App() {
         }
     };
 
+    // Handle editing a user message - deletes all messages after it and resends with new content
+    const handleEditMessage = async (messageId: string, newContent: string) => {
+        if (!currentProject || !currentProjectId) return;
+        if (isLoading) return;
+
+        // Find the index of the message being edited
+        const messageIndex = currentProject.messages.findIndex(m => m.id === messageId);
+        if (messageIndex === -1) return;
+
+        // Keep only messages up to (but not including) the edited message
+        const messagesBeforeEdit = currentProject.messages.slice(0, messageIndex);
+
+        // Update the project with truncated messages
+        await updateProject(currentProjectId, {
+            messages: messagesBeforeEdit
+        });
+
+        // Send the new message (this will trigger a new generation)
+        handleSendMessage(newContent);
+    };
+
     const handleAutoFixError = async (error: string) => {
         if (!currentProject || !currentProjectId) return;
         if (isLoading || autoFixCount >= 2) {
@@ -312,12 +403,17 @@ export default function App() {
         console.log("Triggering Auto-Fix for error:", error);
         setAutoFixCount(prev => prev + 1);
         setIsLoading(true);
+        setIsAutoFixing(true);  // Mark as auto-fix to hide Aether label
         setGenerationSteps([]);
+        setCurrentBuildPlan('');     // Clear previous build plan
+        setCurrentBuildSummary('');  // Clear previous build summary
+
+        const generationStartTime = Date.now();  // Track generation start time
 
         const sysMsg: Message = {
             id: Date.now().toString(),
             role: MessageRole.SYSTEM,
-            content: `Runtime Error Detected: ${error}. Initiating targeted repair...`,
+            content: error,
             timestamp: Date.now(),
             isError: true
         };
@@ -338,16 +434,34 @@ export default function App() {
             const generatedData = await generateAppCodeStream(
                 fixPrompt,
                 currentProject.files,
-                (steps) => setGenerationSteps(steps)
+                (steps) => setGenerationSteps(steps),
+                undefined, // no build plan callback for auto-fix
+                selectedModel
             );
 
+            // Accumulate tokens to session total for auto-fixes
+            const fixTokens = generatedData.tokenCount || 0;
+            const cumulativeTokens = sessionTokenCount + fixTokens;
+            setSessionTokenCount(cumulativeTokens);
+
             const mergedFiles = mergeFiles(currentProject.files, generatedData.files);
+
+            // Calculate thinking time in seconds
+            const thinkingTime = Math.round((Date.now() - generationStartTime) / 1000);
 
             const aiMsg: Message = {
                 id: (Date.now() + 1).toString(),
                 role: MessageRole.ASSISTANT,
                 content: "I've repaired the error by updating the affected component.",
-                timestamp: Date.now()
+                timestamp: Date.now(),
+                // Persist the actions taken during fix
+                actions: generatedData.files.map(f => {
+                    const step = generationSteps.find(s => s.id === f.name);
+                    const lineCount = step?.lineCount || (f.content.match(/\n/g) || []).length + 1;
+                    return { fileName: f.name, lineCount };
+                }),
+                tokenCount: cumulativeTokens,  // Show cumulative session total
+                thinkingTime,
             };
 
             await updateProject(currentProjectId, {
@@ -377,8 +491,27 @@ export default function App() {
             });
         } finally {
             setIsLoading(false);
+            setIsAutoFixing(false);
         }
     };
+
+    // Capture error from Sandpack preview
+    const handleCaptureError = useCallback((error: string) => {
+        // Don't capture errors while we're fixing one or if same error
+        if (isLoading || pendingError === error) return;
+        setPendingError(error);
+    }, [isLoading, pendingError]);
+
+    // Dismiss error without fixing
+    const handleDismissError = useCallback(() => {
+        setPendingError(null);
+    }, []);
+
+    // Auto-fix and clear pending error
+    const handleAutoFixWithClear = useCallback((error: string) => {
+        setPendingError(null);
+        handleAutoFixError(error);
+    }, [handleAutoFixError]);
 
     // Show loading state while checking auth
     if (authLoading) {
@@ -414,6 +547,12 @@ export default function App() {
                 onGoogleSignIn={signInWithGoogle}
             />
 
+            {/* API Keys Modal */}
+            <ApiKeysModal
+                isOpen={showApiKeysModal}
+                onClose={() => setShowApiKeysModal(false)}
+            />
+
             {/* Share Modal */}
             {currentProject && (
                 <ShareModal
@@ -432,6 +571,17 @@ export default function App() {
                 />
             )}
 
+            {/* GitHub Modal */}
+            {currentProject && (
+                <GitHubModal
+                    isOpen={showGitHubModal}
+                    onClose={() => setShowGitHubModal(false)}
+                    projectId={currentProject.id}
+                    projectName={currentProject.name}
+                    files={currentProject.files}
+                />
+            )}
+
             <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
 
                 {viewState === ViewState.LANDING ? (
@@ -445,12 +595,14 @@ export default function App() {
                             user={user}
                             onAuthClick={() => setShowAuthModal(true)}
                             onSignOut={signOut}
+                            onApiKeysClick={() => setShowApiKeysModal(true)}
                             onHome={() => {
                                 setCurrentProjectId(null);
                                 setViewState(ViewState.LANDING);
                                 setPreviewingVersion(null);
                                 setShowVersionHistory(false);
                             }}
+                            transparent={true}
                         />
                         <ChatInterface
                             messages={[]}
@@ -458,9 +610,16 @@ export default function App() {
                             viewState={ViewState.LANDING}
                             isLoading={isLoading}
                             generationSteps={generationSteps}
+                            buildPlan={currentBuildPlan}
+                            buildSummary={currentBuildSummary}
                             projects={projects}
                             onSelectProject={handleSelectProject}
                             onDeleteProject={handleDeleteProject}
+                            onPinProject={handlePinProject}
+                            selectedModel={selectedModel}
+                            onSelectModel={setSelectedModel}
+                            configuredProviders={configuredProviders}
+                            onApiKeysClick={() => setShowApiKeysModal(true)}
                         />
                     </div>
                 ) : (
@@ -469,7 +628,6 @@ export default function App() {
                         <div
                             className={`
                                 h-full shrink-0 overflow-hidden
-                                transition-[max-width,opacity] duration-150 ease-[cubic-bezier(0.2,0,0,1)]
                             `}
                             style={{
                                 maxWidth: isSidebarHidden ? '0px' : '477px',
@@ -486,6 +644,7 @@ export default function App() {
                                     user={user}
                                     onAuthClick={() => setShowAuthModal(true)}
                                     onSignOut={signOut}
+                                    onApiKeysClick={() => setShowApiKeysModal(true)}
                                     onHome={() => {
                                         setCurrentProjectId(null);
                                         setViewState(ViewState.LANDING);
@@ -515,6 +674,7 @@ export default function App() {
                                         onSelectProject={handleSelectProject}
                                         onNewProject={handleNewProject}
                                         onDeleteProject={handleDeleteProject}
+                                        onPinProject={handlePinProject}
                                         onClose={() => setShowProjects(false)}
                                     />
                                 ) : (
@@ -524,9 +684,12 @@ export default function App() {
                                         viewState={ViewState.BUILDING}
                                         isLoading={isLoading}
                                         generationSteps={generationSteps}
+                                        buildPlan={currentBuildPlan}
+                                        buildSummary={currentBuildSummary}
                                         projects={projects}
                                         onSelectProject={handleSelectProject}
                                         onDeleteProject={handleDeleteProject}
+                                        onPinProject={handlePinProject}
                                         versions={versions}
                                         versionsLoading={versionsLoading}
                                         currentFiles={currentProject?.files || []}
@@ -549,6 +712,15 @@ export default function App() {
                                         onPreviewVersion={setPreviewingVersion}
                                         previewingVersionId={previewingVersion?.id || null}
                                         userEmail={user?.email}
+                                        pendingError={pendingError}
+                                        onAutoFix={handleAutoFixWithClear}
+                                        onDismissError={handleDismissError}
+                                        isAutoFixing={isAutoFixing}
+                                        selectedModel={selectedModel}
+                                        onSelectModel={setSelectedModel}
+                                        configuredProviders={configuredProviders}
+                                        onApiKeysClick={() => setShowApiKeysModal(true)}
+                                        onEditMessage={handleEditMessage}
                                     />
                                 )}
                             </div>
@@ -561,9 +733,12 @@ export default function App() {
                                 viewState={ViewState.BUILDING}
                                 isLoading={isLoading}
                                 generationSteps={generationSteps}
+                                buildPlan={currentBuildPlan}
+                                buildSummary={currentBuildSummary}
                                 projects={projects}
                                 onSelectProject={handleSelectProject}
                                 onDeleteProject={handleDeleteProject}
+                                onPinProject={handlePinProject}
                                 versions={versions}
                                 versionsLoading={versionsLoading}
                                 currentFiles={currentProject?.files || []}
@@ -586,6 +761,15 @@ export default function App() {
                                 onPreviewVersion={setPreviewingVersion}
                                 previewingVersionId={previewingVersion?.id || null}
                                 userEmail={user?.email}
+                                pendingError={pendingError}
+                                onAutoFix={handleAutoFixWithClear}
+                                onDismissError={handleDismissError}
+                                isAutoFixing={isAutoFixing}
+                                selectedModel={selectedModel}
+                                onSelectModel={setSelectedModel}
+                                configuredProviders={configuredProviders}
+                                onApiKeysClick={() => setShowApiKeysModal(true)}
+                                onEditMessage={handleEditMessage}
                             />
                         </div>
 
@@ -597,8 +781,9 @@ export default function App() {
                                 isCodeView={isCodeView}
                                 projectTitle={currentProject?.name || ''}
                                 isLoading={isLoading}
-                                onPreviewError={handleAutoFixError}
+                                onPreviewError={handleCaptureError}
                                 onShareClick={() => setShowShareModal(true)}
+                                onGitHubClick={() => setShowGitHubModal(true)}
                                 isPublic={currentProject?.isPublic}
                                 previewingVersion={previewingVersion}
                                 onRestoreVersion={async () => {

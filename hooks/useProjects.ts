@@ -12,6 +12,8 @@ interface UseProjectsReturn {
     refreshProjects: () => Promise<void>;
     shareProject: (id: string) => Promise<string>;
     unshareProject: (id: string) => Promise<void>;
+    pinProject: (id: string) => Promise<void>;
+    unpinProject: (id: string) => Promise<void>;
 }
 
 // Convert database row to app Project type
@@ -24,6 +26,8 @@ const rowToProject = (row: ProjectRow): Project => ({
     messages: row.messages as Message[],
     shareId: row.share_id,
     isPublic: row.is_public,
+    isPinned: row.is_pinned,
+    pinnedAt: row.pinned_at ? new Date(row.pinned_at).getTime() : undefined,
 });
 
 // Convert app Project to database row format
@@ -180,6 +184,50 @@ export function useProjects(userId: string | undefined): UseProjectsReturn {
         );
     }, [userId]);
 
+    // Pin a project (set is_pinned = true, pinned_at = now)
+    const pinProject = useCallback(async (id: string): Promise<void> => {
+        if (!userId) throw new Error('Must be logged in to pin projects');
+
+        const now = new Date().toISOString();
+
+        const { error: updateError } = await supabase
+            .from('projects')
+            .update({ is_pinned: true, pinned_at: now })
+            .eq('id', id)
+            .eq('user_id', userId);
+
+        if (updateError) throw updateError;
+
+        setProjects(prev =>
+            prev.map(p =>
+                p.id === id
+                    ? { ...p, isPinned: true, pinnedAt: new Date(now).getTime() }
+                    : p
+            )
+        );
+    }, [userId]);
+
+    // Unpin a project (set is_pinned = false, pinned_at = null)
+    const unpinProject = useCallback(async (id: string): Promise<void> => {
+        if (!userId) throw new Error('Must be logged in to unpin projects');
+
+        const { error: updateError } = await supabase
+            .from('projects')
+            .update({ is_pinned: false, pinned_at: null })
+            .eq('id', id)
+            .eq('user_id', userId);
+
+        if (updateError) throw updateError;
+
+        setProjects(prev =>
+            prev.map(p =>
+                p.id === id
+                    ? { ...p, isPinned: false, pinnedAt: undefined }
+                    : p
+            )
+        );
+    }, [userId]);
+
     return {
         projects,
         loading,
@@ -190,5 +238,7 @@ export function useProjects(userId: string | undefined): UseProjectsReturn {
         refreshProjects,
         shareProject,
         unshareProject,
+        pinProject,
+        unpinProject,
     };
 }

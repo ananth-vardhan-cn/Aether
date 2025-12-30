@@ -1,8 +1,13 @@
 import React, { useState, useMemo } from 'react';
 import { Icons } from './ui/Icons';
+import { Logo } from './ui/Logo';
+import { GeneratingPreview } from './GeneratingPreview';
+import { AnimatePresence, motion } from 'framer-motion';
 import { File } from '../types';
 import { SandpackProvider, SandpackLayout, SandpackPreview, SandpackFileExplorer, SandpackCodeEditor, useSandpack, useSandpackNavigation } from "@codesandbox/sandpack-react";
 import { amethyst } from "@codesandbox/sandpack-themes";
+import { extractDependencies } from '../lib/extractDependencies';
+import { exportProjectAsZip } from '../lib/exportProject';
 
 import { ProjectVersion } from '../hooks/useProjectVersions';
 
@@ -17,6 +22,7 @@ interface PreviewWindowProps {
   onShareClick?: () => void;
   isPublic?: boolean;
   onHistoryClick?: () => void;
+  onGitHubClick?: () => void;  // New: Open GitHub modal
   previewingVersion?: ProjectVersion | null;
   onRestoreVersion?: () => void;
   onBackToLatest?: () => void;
@@ -25,14 +31,23 @@ interface PreviewWindowProps {
 }
 
 // Custom component to handle Sandpack content with useSandpack hook
-const SandpackContent: React.FC<{ isCodeView: boolean }> = ({ isCodeView }) => {
+const SandpackContent: React.FC<{ isCodeView: boolean; onError?: (error: string) => void }> = ({ isCodeView, onError }) => {
   const { sandpack } = useSandpack();
+
+  // Detect and report errors
+  React.useEffect(() => {
+    if (sandpack.error && onError) {
+      // Extract error message
+      const errorMessage = sandpack.error.message || String(sandpack.error);
+      onError(errorMessage);
+    }
+  }, [sandpack.error, onError]);
 
   return (
     <SandpackLayout style={{ height: '100%', width: '100%', flex: 1, overflow: 'hidden' }}>
       {/* Code Editor - Always mounted, hidden with CSS when not in code view */}
       <div
-        className={`${isCodeView ? 'flex' : 'hidden'} h-full overflow-hidden`}
+        className={`${isCodeView ? 'flex' : 'hidden'} h-full overflow-hidden relative`}
         style={{ flex: isCodeView ? 1 : 0, minWidth: 0 }}
       >
         <SandpackFileExplorer style={{ height: '100%', minWidth: '180px', maxWidth: '200px', flexShrink: 0 }} />
@@ -42,8 +57,19 @@ const SandpackContent: React.FC<{ isCodeView: boolean }> = ({ isCodeView }) => {
           showInlineErrors
           wrapContent
           closableTabs
+          readOnly
           style={{ height: '100%', flex: 1, minWidth: 0, overflow: 'hidden' }}
         />
+        {/* Read Only Indicator */}
+        <div className="absolute bottom-4 right-4 z-10">
+          <div className="px-3 py-1.5 bg-zinc-800/90 backdrop-blur-sm border border-zinc-600 rounded-full text-xs font-semibold text-zinc-300 flex items-center gap-2 shadow-lg">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+              <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+            </svg>
+            Read Only
+          </div>
+        </div>
       </div>
 
       {/* Preview - Always mounted, hidden with CSS when in code view */}
@@ -72,6 +98,7 @@ export const PreviewWindow: React.FC<PreviewWindowProps> = ({
   onShareClick,
   isPublic,
   onHistoryClick,
+  onGitHubClick,
   previewingVersion,
   onRestoreVersion,
   onBackToLatest,
@@ -209,46 +236,13 @@ module.exports = {
     return filesWithConfigs;
   }, [sandpackFiles]);
 
-  const dependencies: Record<string, string> = {
-    // Core UI
-    "lucide-react": "^0.263.1",
-    "framer-motion": "^10.12.16",
-
-    // Utilities
-    "clsx": "^2.0.0",
-    "tailwind-merge": "^1.14.0",
-    "class-variance-authority": "^0.7.0",
-    "date-fns": "^2.30.0",
-    "react-router-dom": "^6.14.1",
-
-    // Radix UI Primitives
-    "@radix-ui/react-dialog": "^1.0.5",
-    "@radix-ui/react-dropdown-menu": "^2.0.6",
-    "@radix-ui/react-tabs": "^1.0.4",
-    "@radix-ui/react-tooltip": "^1.0.7",
-    "@radix-ui/react-accordion": "^1.1.2",
-    "@radix-ui/react-switch": "^1.0.3",
-    "@radix-ui/react-slider": "^1.1.2",
-    "@radix-ui/react-checkbox": "^1.0.4",
-    "@radix-ui/react-select": "^2.0.0",
-    "@radix-ui/react-popover": "^1.0.7",
-    "@radix-ui/react-label": "^2.0.2",
-    "@radix-ui/react-slot": "^1.0.2",
-
-    // Data Visualization
-    "recharts": "^2.8.0",
-
-    // Forms
-    "react-hook-form": "^7.46.1",
-    "zod": "^3.22.2",
-    "@hookform/resolvers": "^3.3.1",
-
-    // Tailwind
-    "tailwindcss": "^3.3.0",
-    "postcss": "^8.4.0",
-    "autoprefixer": "^10.4.0",
-    "tailwindcss-animate": "^1.0.7",
-  };
+  // Dynamically extract dependencies from generated files
+  // This detects all import statements and adds the packages to Sandpack
+  const dependencies = useMemo(() => {
+    const detected = extractDependencies(files);
+    console.log('📦 Dynamic dependencies detected:', Object.keys(detected).length, detected);
+    return detected;
+  }, [files]);
 
   const handleCopy = async () => {
     const textToCopy = "Code is available in the editor.";
@@ -366,11 +360,22 @@ module.exports = {
                 </button>
               )}
 
-
-
+              {onGitHubClick && (
+                <button
+                  onClick={onGitHubClick}
+                  className="flex items-center justify-center hover:opacity-80 transition-opacity hidden sm:flex rounded-lg overflow-hidden"
+                  title="Sync to GitHub"
+                >
+                  <div className="bg-zinc-800 rounded-lg p-2 flex items-center justify-center">
+                    <Icons.Github size={16} className="text-white" />
+                  </div>
+                </button>
+              )}
               <button
-                className="bg-white text-black px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-zinc-200 transition-colors flex items-center gap-2"
-                onClick={() => alert("Downloading feature coming soon with Sandpack integration!")}
+                className="bg-white text-black px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-zinc-200 transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                onClick={() => exportProjectAsZip(projectTitle, files)}
+                disabled={files.length === 0}
+                title={files.length === 0 ? "Generate a project first" : "Export as ZIP"}
               >
                 <Icons.Download size={14} />
                 <span className="hidden sm:inline">Export</span>
@@ -388,57 +393,56 @@ module.exports = {
             }`}
           style={!isCodeView ? viewportStyles[viewport] : { width: '100%', maxWidth: '100%' }}
         >
-          {/* Loading Overlay */}
+          {/* Loading Overlay - Animated Card Stack */}
           {isLoading && (
-            <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-[#050505]/90 backdrop-blur-sm animate-in fade-in duration-500">
-              <div className="flex flex-col items-center gap-6 p-8">
-                <div className="relative">
-                  <div className="w-20 h-20 rounded-full border-4 border-zinc-800/50"></div>
-                  <div className="absolute top-0 left-0 w-20 h-20 rounded-full border-4 border-t-aether-lime border-r-transparent border-b-transparent border-l-transparent animate-spin duration-1000"></div>
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <Icons.Sparkles className="w-8 h-8 text-aether-lime animate-pulse" />
-                  </div>
-                </div>
-                <div className="text-center space-y-2">
-                  <h3 className="text-xl font-bold text-white tracking-tight">Generating application...</h3>
-                  <p className="text-sm text-zinc-500 font-mono animate-pulse">Consulting the Aether</p>
-                </div>
-              </div>
+            <div className="absolute inset-0 z-50 bg-[#050505]/95 backdrop-blur-sm animate-in fade-in duration-500">
+              <GeneratingPreview />
             </div>
           )}
 
-          <SandpackProvider
-            key={sandpackKey}
-            template="react-ts"
-            theme={amethyst}
-            files={finalSandpackFiles}
-            options={{
-              externalResources: ["https://cdn.tailwindcss.com"],
-              recompileMode: "delayed",
-              recompileDelay: 300,
-              autoReload: true,
-              visibleFiles: Object.keys(finalSandpackFiles).filter(f =>
-                !f.startsWith('/public/') &&
-                !f.endsWith('package.json') &&
-                !f.endsWith('tsconfig.json') &&
-                !f.endsWith('tailwind.config.js') &&
-                !f.endsWith('postcss.config.js')
-              ),
-              activeFile: finalSandpackFiles['/App.tsx'] ? '/App.tsx' : undefined,
-              classes: {
-                "sp-wrapper": "!h-full !w-full",
-                "sp-layout": "!h-full !w-full !flex !flex-1",
-                "sp-stack": "!h-full !flex-1",
-                "sp-preview": "!flex-1 !w-full",
-                "sp-preview-container": "!h-full !w-full",
-              },
-            }}
-            customSetup={{
-              dependencies: dependencies
-            }}
-          >
-            <SandpackContent isCodeView={isCodeView} />
-          </SandpackProvider>
+          {/* Show placeholder when no project files exist */}
+          {files.length === 0 ? (
+            <div className="flex-1 flex flex-col items-center justify-center bg-zinc-950 text-center p-8">
+              <div className="w-24 h-24 rounded-3xl bg-zinc-900/50 border border-zinc-800 flex items-center justify-center mb-6 shadow-2xl relative group overflow-hidden">
+                <div className="absolute inset-0 bg-gradient-to-tr from-aether-lime/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+                <Logo className="w-12 h-12" />
+              </div>
+              <h3 className="text-xl font-semibold text-zinc-300">Your preview will appear here</h3>
+            </div>
+          ) : (
+            <SandpackProvider
+              key={sandpackKey}
+              template="react-ts"
+              theme={amethyst}
+              files={finalSandpackFiles}
+              options={{
+                externalResources: ["https://cdn.tailwindcss.com"],
+                recompileMode: "delayed",
+                recompileDelay: 300,
+                autoReload: true,
+                visibleFiles: Object.keys(finalSandpackFiles).filter(f =>
+                  !f.startsWith('/public/') &&
+                  !f.endsWith('package.json') &&
+                  !f.endsWith('tsconfig.json') &&
+                  !f.endsWith('tailwind.config.js') &&
+                  !f.endsWith('postcss.config.js')
+                ),
+                activeFile: finalSandpackFiles['/App.tsx'] ? '/App.tsx' : undefined,
+                classes: {
+                  "sp-wrapper": "!h-full !w-full",
+                  "sp-layout": "!h-full !w-full !flex !flex-1",
+                  "sp-stack": "!h-full !flex-1",
+                  "sp-preview": "!flex-1 !w-full",
+                  "sp-preview-container": "!h-full !w-full",
+                },
+              }}
+              customSetup={{
+                dependencies: dependencies
+              }}
+            >
+              <SandpackContent isCodeView={isCodeView} onError={onPreviewError} />
+            </SandpackProvider>
+          )}
         </div>
       </div>
     </div>

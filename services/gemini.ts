@@ -239,10 +239,19 @@ INSTRUCTIONS:
           // Determine if creating or updating
           const action = existingFileNames.has(fileName) ? 'Updating' : 'Creating';
 
+          // Determine file type for icon display
+          const ext = fileName.split('.').pop()?.toLowerCase();
+          let fileType: 'tsx' | 'ts' | 'css' | 'json' | 'html' | 'other' = 'other';
+          if (ext === 'tsx' || ext === 'ts' || ext === 'jsx' || ext === 'js') fileType = 'tsx';
+          else if (ext === 'css') fileType = 'css';
+          else if (ext === 'json') fileType = 'json';
+          else if (ext === 'html' || ext === 'htm') fileType = 'html';
+
           steps.push({
             id: fileName,
-            label: `${action} ${fileName} `,
-            status: 'in-progress'
+            label: `${action} ${fileName}`,
+            status: 'in-progress',
+            fileType
           });
         }
       });

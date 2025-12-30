@@ -18,8 +18,18 @@ export interface Profile {
     email: string | null;
     full_name: string | null;
     avatar_url: string | null;
+    github_access_token: string | null;  // GitHub OAuth access token
     created_at: string;
     updated_at: string;
+}
+
+// GitHub repository info stored in projects
+export interface GitHubRepoInfo {
+    owner: string;
+    name: string;
+    branch: string;
+    lastCommitSha: string;
+    url: string;
 }
 
 export interface ProjectRow {
@@ -37,6 +47,9 @@ export interface ProjectRow {
     }>;
     share_id: string | null;            // Unique ID for public sharing
     is_public: boolean;                 // Whether project is publicly accessible
+    is_pinned: boolean;                 // Whether project is pinned to top
+    pinned_at: string | null;           // When project was pinned
+    github_repo: GitHubRepoInfo | null; // GitHub repository connection
     created_at: string;
     updated_at: string;
 }

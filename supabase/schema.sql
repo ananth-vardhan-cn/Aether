@@ -21,6 +21,8 @@ CREATE TABLE public.projects (
   messages JSONB DEFAULT '[]'::jsonb,
   share_id TEXT UNIQUE,                    -- Unique ID for public sharing
   is_public BOOLEAN DEFAULT false,         -- Whether project is publicly accessible
+  is_pinned BOOLEAN DEFAULT false,         -- Whether project is pinned to top
+  pinned_at TIMESTAMPTZ,                   -- When project was pinned (for sorting)
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );

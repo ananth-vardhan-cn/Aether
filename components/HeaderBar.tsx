@@ -14,11 +14,16 @@ interface HeaderBarProps {
     onAuthClick?: () => void;
     onSignOut?: () => void;
     onHome?: () => void;
+    onApiKeysClick?: () => void;
     // Version history props
     showVersionHistory?: boolean;
     onVersionHistoryClick?: () => void;
     onCloseVersionHistory?: () => void;
     isLoading?: boolean;
+    // Projects toggle props
+    onToggleProjects?: () => void;
+    showProjects?: boolean;
+    transparent?: boolean;
 }
 
 export const HeaderBar: React.FC<HeaderBarProps> = ({
@@ -30,6 +35,7 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
     user,
     onAuthClick,
     onSignOut,
+    onApiKeysClick,
     onHome,
     showVersionHistory = false,
     onVersionHistoryClick,
@@ -37,6 +43,7 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
     isLoading = false,
     onToggleProjects,
     showProjects = false,
+    transparent = false,
 }) => {
     const [showLogoMenu, setShowLogoMenu] = useState(false);
     const [showProfileMenu, setShowProfileMenu] = useState(false);
@@ -71,7 +78,7 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
     };
 
     return (
-        <div className="h-14 bg-black border-b border-zinc-900 flex items-center justify-between px-4 shrink-0">
+        <div className={`h-14 flex items-center justify-between px-4 shrink-0 transition-all z-50 ${transparent ? 'bg-transparent border-transparent absolute top-0 left-0 right-0' : 'bg-black border-b border-zinc-900'}`}>
             {/* Left: Logo (with dropdown) + Projects */}
             <div className="flex items-center gap-4">
                 {/* Logo with dropdown menu (only interactive when in a project) */}
@@ -108,6 +115,16 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
                                     </div>
                                     <button
                                         onClick={() => {
+                                            onApiKeysClick?.();
+                                            setShowLogoMenu(false);
+                                        }}
+                                        className="w-full flex items-center gap-3 px-4 py-3 text-sm text-zinc-300 hover:bg-zinc-900 hover:text-white transition-colors"
+                                    >
+                                        <Icons.Key size={16} className="text-zinc-500" />
+                                        API Keys
+                                    </button>
+                                    <button
+                                        onClick={() => {
                                             onSignOut?.();
                                             setShowLogoMenu(false);
                                         }}
@@ -134,17 +151,8 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
                 </div>
             </div>
 
-            {/* Right: Loading + Projects + Version History */}
-            <div className="flex items-center gap-0">
-                {/* Loading indicator */}
-                {isLoading && (
-                    <div className="flex items-center gap-2 text-xs text-aether-lime">
-                        <div className="w-2 h-2 rounded-full bg-aether-lime animate-pulse" />
-                        <span className="hidden sm:inline font-mono">Building...</span>
-                    </div>
-                )}
-
-                {/* Projects & Version History - Matching PreviewWindow toggle style */}
+            {/* Right: Projects + Version History */}
+            <div className="flex items-center gap-0">                {/* Projects & Version History - Matching PreviewWindow toggle style */}
                 {currentProjectId && (
                     <div className="flex items-center bg-zinc-900 rounded-lg p-0.5 border border-zinc-600">
                         <button
@@ -188,7 +196,7 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
                             title={user ? user.email || 'Profile' : 'Sign In'}
                         >
                             {user ? (
-                                <div className="w-6 h-6 rounded-full bg-gradient-to-br from-aether-lime to-emerald-600 flex items-center justify-center text-black text-xs font-bold">
+                                <div className="w-8 h-8 rounded-full bg-zinc-700 border border-zinc-600 flex items-center justify-center text-zinc-200 text-xs font-medium hover:bg-zinc-600 hover:text-white transition-colors shadow-sm">
                                     {user.email?.charAt(0).toUpperCase() || 'U'}
                                 </div>
                             ) : (
@@ -203,6 +211,16 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
                                     <p className="text-xs text-white truncate font-medium">{user.email}</p>
                                     <p className="text-[10px] text-zinc-500 mt-0.5">Cloud synced</p>
                                 </div>
+                                <button
+                                    onClick={() => {
+                                        onApiKeysClick?.();
+                                        setShowProfileMenu(false);
+                                    }}
+                                    className="w-full flex items-center gap-3 px-4 py-3 text-sm text-zinc-300 hover:bg-zinc-900 hover:text-white transition-colors"
+                                >
+                                    <Icons.Key size={16} className="text-zinc-500" />
+                                    API Keys
+                                </button>
                                 <button
                                     onClick={() => {
                                         onSignOut?.();

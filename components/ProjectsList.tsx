@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useEffect, useRef } from 'react';
 import { Project } from '../types';
 import { Icons } from './ui/Icons';
 import { Logo } from './ui/Logo';
@@ -9,6 +9,7 @@ interface ProjectsListProps {
     onSelectProject: (id: string) => void;
     onNewProject: () => void;
     onDeleteProject?: (id: string) => void;
+    onPinProject?: (id: string, isPinned: boolean) => void;
     onClose: () => void;
 }
 
@@ -18,19 +19,52 @@ export const ProjectsList: React.FC<ProjectsListProps> = ({
     onSelectProject,
     onNewProject,
     onDeleteProject,
+    onPinProject,
     onClose,
 }) => {
-    // Sort projects by last modified (newest first)
+    const selectedRef = useRef<HTMLDivElement>(null);
+
+    // Sort projects: pinned first (by pinnedAt desc), then unpinned (by lastModified desc)
     const sortedProjects = useMemo(() => {
-        return [...projects].sort((a, b) =>
-            new Date(b.lastModified).getTime() - new Date(a.lastModified).getTime()
-        );
+        return [...projects].sort((a, b) => {
+            // Pinned projects come first
+            if (a.isPinned && !b.isPinned) return -1;
+            if (!a.isPinned && b.isPinned) return 1;
+
+            // Both pinned: sort by pinnedAt (most recently pinned first)
+            if (a.isPinned && b.isPinned) {
+                return (b.pinnedAt || 0) - (a.pinnedAt || 0);
+            }
+
+            // Both unpinned: sort by lastModified
+            return new Date(b.lastModified).getTime() - new Date(a.lastModified).getTime();
+        });
     }, [projects]);
+
+    // Scroll to selected project when component mounts
+    useEffect(() => {
+        // Use a small delay to ensure the DOM is ready
+        const timer = setTimeout(() => {
+            if (selectedRef.current && scrollContainerRef.current && currentProjectId) {
+                const container = scrollContainerRef.current;
+                const element = selectedRef.current;
+                const containerRect = container.getBoundingClientRect();
+                const elementRect = element.getBoundingClientRect();
+
+                // Calculate scroll position to center the element
+                const scrollTop = element.offsetTop - container.offsetTop - (containerRect.height / 2) + (elementRect.height / 2);
+                container.scrollTo({ top: Math.max(0, scrollTop), behavior: 'smooth' });
+            }
+        }, 100);
+        return () => clearTimeout(timer);
+    }, [currentProjectId]);
+
+    const scrollContainerRef = useRef<HTMLDivElement>(null);
 
     return (
         <div className="flex flex-col h-full bg-black text-white animate-in slide-in-from-left-5 duration-300">
             {/* List */}
-            <div className="flex-1 overflow-y-auto p-2 scrollbar-thin scrollbar-thumb-zinc-800 scrollbar-track-transparent">
+            <div ref={scrollContainerRef} className="flex-1 overflow-y-auto p-2 scrollbar-thin scrollbar-thumb-zinc-800 scrollbar-track-transparent">
                 <button
                     onClick={() => { onNewProject(); onClose(); }}
                     className="w-full flex items-center gap-3 p-3 mb-2 rounded-xl bg-gradient-to-r from-aether-lime/10 to-transparent border border-aether-lime/20 hover:border-aether-lime/40 text-left group transition-all"
@@ -56,6 +90,7 @@ export const ProjectsList: React.FC<ProjectsListProps> = ({
                         {sortedProjects.map((project) => (
                             <div
                                 key={project.id}
+                                ref={currentProjectId === project.id ? selectedRef : null}
                                 onClick={() => { onSelectProject(project.id); onClose(); }}
                                 className={`group flex items-center gap-3 p-3 rounded-xl cursor-pointer border transition-all ${currentProjectId === project.id
                                     ? 'bg-zinc-900 border-zinc-800'
@@ -78,8 +113,21 @@ export const ProjectsList: React.FC<ProjectsListProps> = ({
                                     </div>
                                 </div>
 
-                                {currentProjectId === project.id && (
-                                    <div className="w-1.5 h-1.5 rounded-full bg-aether-lime shadow-[0_0_8px_rgba(132,204,22,0.8)]" />
+                                {/* Pin Button */}
+                                {onPinProject && (
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            onPinProject(project.id, !project.isPinned);
+                                        }}
+                                        className={`p-1.5 rounded-lg transition-all ${project.isPinned
+                                            ? 'text-white bg-zinc-700'
+                                            : 'opacity-0 group-hover:opacity-100 text-zinc-500 hover:text-white hover:bg-zinc-700'
+                                            }`}
+                                        title={project.isPinned ? 'Unpin project' : 'Pin project'}
+                                    >
+                                        <Icons.Pin size={14} className={project.isPinned ? 'fill-current' : ''} />
+                                    </button>
                                 )}
 
                                 {onDeleteProject && (

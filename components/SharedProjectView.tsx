@@ -4,6 +4,8 @@ import { Logo } from './ui/Logo';
 import { supabase } from '../lib/supabase';
 import { SandpackProvider, SandpackLayout, SandpackPreview } from "@codesandbox/sandpack-react";
 import { amethyst } from "@codesandbox/sandpack-themes";
+import { extractDependencies } from '../lib/extractDependencies';
+import { File } from '../types';
 
 interface SharedProject {
     id: string;
@@ -82,15 +84,16 @@ module.exports = {
         return files;
     }, [sandpackFiles]);
 
-    const dependencies: Record<string, string> = {
-        "lucide-react": "^0.263.1",
-        "framer-motion": "^10.12.16",
-        "clsx": "^2.0.0",
-        "tailwind-merge": "^1.14.0",
-        "tailwindcss": "^3.3.0",
-        "postcss": "^8.4.0",
-        "autoprefixer": "^10.4.0",
-    };
+    // Dynamically extract dependencies from project files
+    const dependencies = useMemo(() => {
+        if (!project?.files) return {};
+        const typedFiles: File[] = project.files.map(f => ({
+            name: f.name,
+            content: f.content,
+            type: f.type as File['type']
+        }));
+        return extractDependencies(typedFiles);
+    }, [project?.files]);
 
     if (loading) {
         return (
